@@ -1,0 +1,152 @@
+setLeds=function(elHandle,left,middle,right)
+    simSetUIButtonProperty(elHandle,8,sim_buttonproperty_staydown)
+    simSetUIButtonProperty(elHandle,16,sim_buttonproperty_staydown)
+    simSetUIButtonProperty(elHandle,24,sim_buttonproperty_staydown)
+    if (left) then
+        simSetUIButtonProperty(elHandle,8,sim_buttonproperty_staydown+sim_buttonproperty_isdown)
+    end
+    if (middle) then
+        simSetUIButtonProperty(elHandle,16,sim_buttonproperty_staydown+sim_buttonproperty_isdown)
+    end
+    if (right) then
+        simSetUIButtonProperty(elHandle,24,sim_buttonproperty_staydown+sim_buttonproperty_isdown)
+    end
+end
+
+threadFunction=function()
+    while simGetSimulationState()~=sim_simulation_advancing_abouttostop do
+        simulationTime=simGetSimulationTime()
+        dt=simulationTime-previousSimulationTime
+        previousSimulationTime=simulationTime
+        state=simGetSimulationState()
+
+        s=simGetObjectSizeFactor(objHandle) -- in case we wanna scale the vehicle during simulation
+
+        -- Check the user interface:
+        b=simGetUIButtonProperty(display,4)
+        dyn=(simBoolAnd16(b,sim_buttonproperty_isdown)==0)
+        if (dynamicSimulation==nil) or (dynamicSimulation~=dyn) then
+            dynamicSimulation=dyn
+            p=simBoolOr16(simGetModelProperty(objHandle),sim_modelproperty_not_dynamic)
+            if (dynamicSimulation) then
+                simSetModelProperty(objHandle,p-sim_modelproperty_not_dynamic)
+            else
+                simSetModelProperty(objHandle,p)
+                -- Make also sure the vahicle is flat on the ground:
+                p=simGetObjectPosition(objHandle,sim_handle_parent)
+                o=simGetObjectOrientation(objHandle,sim_handle_parent)
+                p[3]=initialVehicleZpos
+                o[1]=0
+                o[2]=0
+                simSetObjectPosition(objHandle,sim_handle_parent,p)
+                simSetObjectOrientation(objHandle,sim_handle_parent,o)
+            end
+        end
+
+        -- Read the sensors:
+        sensorReading={false,false,false}
+        sensorReading[1]=(simReadVisionSensor(leftSensor)==1)
+        sensorReading[2]=(simReadVisionSensor(middleSensor)==1)
+        sensorReading[3]=(simReadVisionSensor(rightSensor)==1)
+
+        -- Set the sensor indicators:
+        setLeds(display,sensorReading[1],sensorReading[2],sensorReading[3])
+
+        -- Decide about left and right velocities:
+        linearVelocityLeft=nominalLinearVelocity*s
+        linearVelocityRight=nominalLinearVelocity*s
+        if (sensorReading[1]==false) then
+            linearVelocityLeft=linearVelocityLeft*0.3
+        end
+        if (sensorReading[3]==false) then
+            linearVelocityRight=linearVelocityRight*0.3
+        end
+
+        -- Now make it move!
+        if (dynamicSimulation) then
+            simSetJointTargetVelocity(leftJointDynamic,linearVelocityLeft/(s*wheelRadius))
+            simSetJointTargetVelocity(rightJointDynamic,linearVelocityRight/(s*wheelRadius))
+        else
+            dt=simGetSimulationTimeStep()
+            p=simGetJointPosition(leftJoint)
+            simSetJointPosition(leftJoint,p+linearVelocityLeft*dt/(s*wheelRadius))
+            p=simGetJointPosition(rightJoint)
+            simSetJointPosition(rightJoint,p+linearVelocityRight*dt/(s*wheelRadius))
+            linMov=dt*(linearVelocityLeft+linearVelocityRight)/2.0
+            rotMov=dt*math.atan((linearVelocityRight-linearVelocityLeft)/(s*interWheelDistance))
+
+
+            position=simGetObjectPosition(lineTracerBase,-1)
+            orientation=simGetObjectOrientation(lineTracerBase,-1)
+            xDir={math.cos(orientation[3]),math.sin(orientation[3]),0.0}
+            position[1]=position[1]+xDir[1]*linMov
+            position[2]=position[2]+xDir[2]*linMov
+            orientation[3]=orientation[3]+rotMov
+            np=simBuildMatrix(position,orientation)
+            simSetObjectMatrix(objHandle,-1,simMultiplyMatrices(np,simGetObjectMatrix(objHandle,lineTracerBase)))
+        end
+
+        simSwitchThread() -- explicit thread switching: give control to other threads or the main thread
+    end
+end
+
+-- Put some initialization code here:
+display=simGetUIHandle("sensorDisplay")
+setLeds(display,false,false,false)
+objHandle=simGetObjectAssociatedWithScript(sim_handle_self)
+result,robotName=simGetObjectName(objHandle)
+simSetUIButtonLabel(display,0,robotName)
+lineTracerBase=simGetObjectHandle("LineTracerBase")
+leftSensor=simGetObjectHandle("LeftSensor")
+middleSensor=simGetObjectHandle("MiddleSensor")
+rightSensor=simGetObjectHandle("RightSensor")
+leftJoint=simGetObjectHandle("LeftJoint")
+rightJoint=simGetObjectHandle("RightJoint")
+leftJointDynamic=simGetObjectHandle("DynamicLeftJoint")
+rightJointDynamic=simGetObjectHandle("DynamicRightJoint")
+nominalLinearVelocity=0.4
+wheelRadius=0.036
+interWheelDistance=0.119
+initialVehicleZpos=simGetObjectPosition(objHandle,sim_handle_parent)[3]
+previousSimulationTime=simGetSimulationTime()
+
+-- We want next while-loop to be executed exactly once every main script pass, but since
+-- this script runs in a thread, we explicitely switch threads at the end of the while-loop
+-- Next instruction makes sure one full pass of the while-loop can be executed before switching threads:
+simSetThreadSwitchTiming(99)
+
+-- Here we execute the regular thread code:
+res,err=xpcall(threadFunction,function(err) return debug.traceback(err) end)
+if not res then
+    simAddStatusbarMessage('Lua runtime error: '..err)
+end
+
+-- Put some clean-up code here:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
